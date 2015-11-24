@@ -2,9 +2,7 @@
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.AspNet.Hosting.Server;
-using Microsoft.AspNet.Http;
 using Microsoft.AspNet.Http.Features;
-using Microsoft.AspNet.Http.Internal;
 using Microsoft.AspNet.Owin;
 using Nowin;
 
@@ -12,11 +10,11 @@ namespace NowinWebSockets
 {
     public class NowinServer : IServer
     {
-        private RequestDelegate _callback;
+        private Func<IFeatureCollection, Task> _callback;
         private INowinServer _nowinServer;
         private ServerBuilder _serverBuilder;
 
-        IFeatureCollection IServer.Features { get; }
+        IFeatureCollection IServer.Features { get; } = new FeatureCollection();
 
         public NowinServer(ServerBuilder serverBuilder)
         {
@@ -27,9 +25,22 @@ namespace NowinWebSockets
             _serverBuilder = serverBuilder;
         }
 
-        public void Start(RequestDelegate requestDelegate)
+        public void Start<THttpContext>(IHttpApplication<THttpContext> application)
         {
-            _callback = requestDelegate;
+            _callback = async features =>
+            {
+                var context = application.CreateContext(features);
+                try
+                {
+                    await application.ProcessRequestAsync(context);
+                }
+                catch (Exception ex)
+                {
+                    application.DisposeContext(context, ex);
+                    throw;
+                }
+                application.DisposeContext(context, null);
+            };
             _nowinServer = _serverBuilder.SetOwinApp(OwinWebSocketAcceptAdapter.AdaptWebSockets(HandleRequest)).Build();
             _nowinServer.Start();
         }
@@ -44,7 +55,7 @@ namespace NowinWebSockets
 
         private Task HandleRequest(IDictionary<string, object> env)
         {
-            return _callback(new DefaultHttpContext(new OwinFeatureCollection(env)));
+            return _callback(new OwinFeatureCollection(env));
         }
     }
 }
